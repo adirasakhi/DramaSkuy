@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Optional: Set Node Version biar aman (sesuai Next.js terbaru)
+[build.environment]
+  NODE_VERSION = "20"

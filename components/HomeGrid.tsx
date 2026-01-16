@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLibrary } from "@/hooks/useLibrary"; // 1. Import Hook Library
 
-// --- 1. Definisi Tipe Data (Sesuai JSON kamu) ---
+// --- 1. Definisi Tipe Data ---
 interface DramaItem {
   bookId: string | number;
   bookName: string;
@@ -16,23 +17,19 @@ interface DramaItem {
 
 export default function HomeGrid() {
   const [items, setItems] = useState<DramaItem[]>([]);
-  const [loading, setLoading] = useState(true); // Loading awal
-  const [loadingMore, setLoadingMore] = useState(false); // Loading pas klik tombol bawah
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [query, setQuery] = useState("");
 
-  // --- FUNCTION FETCH DATA (Bisa buat awal / load more) ---
+  // --- FUNCTION FETCH DATA ---
   const fetchDrama = async (targetPage: number) => {
     try {
-      // Panggil API dengan parameter page
       const res = await fetch(`/api/dramabox/foryou?page=${targetPage}`, { 
         cache: "no-store" 
       });
       const json = await res.json();
-      
-      // Ambil array datanya
       const newData = Array.isArray(json?.data) ? json.data : [];
-      
       return newData as DramaItem[];
     } catch (error) {
       console.error("Gagal ambil data:", error);
@@ -40,7 +37,7 @@ export default function HomeGrid() {
     }
   };
 
-  // 1. Initial Load (Pas pertama buka)
+  // Initial Load
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -50,7 +47,7 @@ export default function HomeGrid() {
     })();
   }, []);
 
-  // 2. Handle Load More (Pas tombol diklik)
+  // Handle Load More
   const handleLoadMore = async () => {
     setLoadingMore(true);
     const nextPage = page + 1;
@@ -58,11 +55,9 @@ export default function HomeGrid() {
 
     if (moreData.length > 0) {
       setItems((prevItems) => {
-        // LOGIKA ANTI DUPLIKAT:
-        // Cuma masukin data baru yang bookId-nya belum ada di list sekarang
+        // Anti Duplikat
         const existingIds = new Set(prevItems.map((i) => String(i.bookId)));
         const uniqueNewItems = moreData.filter((i) => !existingIds.has(String(i.bookId)));
-        
         return [...prevItems, ...uniqueNewItems];
       });
       setPage(nextPage);
@@ -70,21 +65,15 @@ export default function HomeGrid() {
     setLoadingMore(false);
   };
 
-  // --- FILTER & VALIDASI ---
+  // Filter & Validasi
   const filtered = useMemo(() => {
-    // 1. Buang data sampah (wajib ada ID & Nama)
     const validItems = items.filter((it) => it && it.bookId && it.bookName);
-
     const q = query.trim().toLowerCase();
     if (!q) return validItems;
-
-    // 2. Filter Search
-    return validItems.filter((it) =>
-      it.bookName.toLowerCase().includes(q)
-    );
+    return validItems.filter((it) => it.bookName.toLowerCase().includes(q));
   }, [items, query]);
 
-  // Item buat Hero Banner (ambil yang pertama)
+  // Hero Item
   const heroItem = filtered.length > 0 ? filtered[0] : null;
 
   return (
@@ -92,36 +81,53 @@ export default function HomeGrid() {
       
       {/* --- TOPBAR --- */}
       <header className="sticky top-0 z-50 border-b border-white/5 bg-black/60 backdrop-blur-xl supports-[backdrop-filter]:bg-black/30">
-        <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-          
-          <div className="flex items-center justify-between gap-3">
-            <Link href="/" className="font-bold text-xl tracking-tight flex items-center gap-2">
-              <span className="text-red-600 text-2xl">▶</span>
-              DramaBox <span className="text-white/40 text-xs font-normal border border-white/10 px-1.5 py-0.5 rounded">CLONE</span>
-            </Link>
+  <div className="mx-auto max-w-7xl px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+    
+    {/* 1. LOGO AREA */}
+    <div className="flex items-center justify-between gap-3">
+      <Link href="/" className="font-bold text-xl tracking-tight flex items-center gap-2 group">
+        <span className="text-red-600 text-2xl group-hover:scale-110 transition">▶</span>
+        DramaBox <span className="text-white/40 text-xs font-normal border border-white/10 px-1.5 py-0.5 rounded">CLONE</span>
+      </Link>
 
-            <div className="sm:hidden text-xs text-white/50 font-medium">
-              {loading ? "..." : `${filtered.length} Judul`}
-            </div>
-          </div>
+      {/* Mobile Counter (Opsional) */}
+      <div className="sm:hidden text-xs text-white/50 font-medium">
+        {loading ? "..." : `${filtered.length} Judul`}
+      </div>
+    </div>
 
-          {/* Search Bar */}
-          <div className="sm:ml-auto w-full sm:max-w-md">
-            <div className="group flex items-center gap-3 rounded-full bg-white/[0.05] border border-white/5 px-4 py-2.5 focus-within:border-white/20 focus-within:bg-white/[0.08] transition-all duration-300">
-              <span className="text-white/40 group-focus-within:text-white/80 transition">🔎</span>
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Cari judul drama..."
-                className="w-full bg-transparent outline-none text-sm placeholder:text-white/30 text-white"
-              />
-              {query && (
-                <button onClick={() => setQuery("")} className="text-white/40 hover:text-white transition">✕</button>
-              )}
-            </div>
-          </div>
-        </div>
-      </header>
+    {/* 2. SEARCH BAR + TOMBOL LIBRARY (Update di sini) */}
+    <div className="sm:ml-auto w-full sm:max-w-xl flex items-center gap-3">
+      
+      {/* Search Bar */}
+      <div className="flex-1 group flex items-center gap-3 rounded-full bg-white/[0.05] border border-white/5 px-4 py-2.5 focus-within:border-white/20 focus-within:bg-white/[0.08] transition-all duration-300">
+        <span className="text-white/40 group-focus-within:text-white/80 transition">🔎</span>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Cari judul drama..."
+          className="w-full bg-transparent outline-none text-sm placeholder:text-white/30 text-white"
+        />
+        {query && (
+          <button onClick={() => setQuery("")} className="text-white/40 hover:text-white transition">✕</button>
+        )}
+      </div>
+
+      {/* TOMBOL PUSTAKA SAYA (BARU) */}
+      <Link 
+        href="/library"
+        className="flex-shrink-0 w-11 h-11 rounded-full bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 flex items-center justify-center transition group relative"
+        title="Pustaka Saya"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/70 group-hover:text-white transition"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        
+        {/* Opsional: Dot Merah kalau ada isinya (Logic simpel aja) */}
+        {/* <div className="absolute top-2.5 right-3 w-2 h-2 bg-red-500 rounded-full border border-black" /> */}
+      </Link>
+
+    </div>
+  </div>
+</header>
 
       {/* --- CONTENT --- */}
       <main className="pb-20">
@@ -131,7 +137,7 @@ export default function HomeGrid() {
           </div>
         ) : (
           <>
-            {/* Hero Banner (Cuma muncul kalau gak search) */}
+            {/* HERO BANNER (Update: Pass Item ke Component yang udah di-upgrade) */}
             {!query && heroItem && <HeroBanner item={heroItem} />}
 
             <div className="mx-auto max-w-7xl px-4 py-8">
@@ -151,18 +157,13 @@ export default function HomeGrid() {
                 ))}
               </div>
 
-              {/* TOMBOL LOAD MORE */}
+              {/* Load More Button */}
               {!query && filtered.length > 0 && (
                 <div className="mt-12 text-center">
                   <button 
                     onClick={handleLoadMore}
                     disabled={loadingMore}
-                    className="
-                      group relative px-8 py-3 rounded-full bg-white/5 border border-white/10
-                      text-white/80 font-medium hover:bg-white/10 hover:text-white hover:border-white/30
-                      disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300
-                      active:scale-95
-                    "
+                    className="group relative px-8 py-3 rounded-full bg-white/5 border border-white/10 text-white/80 font-medium hover:bg-white/10 hover:text-white hover:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 active:scale-95"
                   >
                     {loadingMore ? (
                       <span className="flex items-center gap-2">
@@ -194,10 +195,24 @@ export default function HomeGrid() {
   );
 }
 
-// --- COMPONENT: HERO BANNER ---
+// --- COMPONENT: HERO BANNER (UPDATED WITH MY LIST) ---
 function HeroBanner({ item }: { item: DramaItem }) {
+  // 2. Pake Hook Library di sini
+  const { toggleMyList, isInList } = useLibrary();
+  
   if (!item || !item.bookName) return null;
+  
   const bgImage = item.coverWap || item.bookCover || "";
+  const isSaved = isInList(String(item.bookId)); // Cek status saved
+
+  const handleToggle = () => {
+    toggleMyList({
+      bookId: String(item.bookId),
+      bookName: item.bookName,
+      cover: bgImage,
+      timestamp: Date.now()
+    });
+  };
 
   return (
     <div className="relative w-full h-[55vh] sm:h-[65vh] overflow-hidden group">
@@ -216,9 +231,33 @@ function HeroBanner({ item }: { item: DramaItem }) {
         <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-1 rounded w-fit uppercase tracking-wider">Top Pick #1</span>
         <h1 className="text-3xl sm:text-5xl md:text-6xl font-extrabold text-white leading-tight drop-shadow-2xl line-clamp-2">{item.bookName}</h1>
         <p className="text-white/70 text-sm sm:text-base line-clamp-2 max-w-xl font-medium">{item.introduction || "Drama pilihan terbaik minggu ini. Nonton sekarang full episode sub indo."}</p>
+        
         <div className="flex gap-3 mt-2">
-          <Link href={`/watch/${item.bookId}`} className="bg-white text-black px-6 py-3 rounded-full font-bold flex items-center gap-2 hover:bg-gray-200 transition active:scale-95">▶ Putar Sekarang</Link>
-          <button className="bg-white/10 border border-white/20 text-white px-5 py-3 rounded-full font-semibold hover:bg-white/20 backdrop-blur-sm transition">+ My List</button>
+          <Link href={`/watch/${item.bookId}`} className="bg-white text-black px-6 py-3 rounded-full font-bold flex items-center gap-2 hover:bg-gray-200 transition active:scale-95">
+            ▶ Putar Sekarang
+          </Link>
+          
+          {/* 3. Tombol My List Interaktif */}
+          <button 
+            onClick={handleToggle}
+            className={`
+              px-5 py-3 rounded-full font-semibold backdrop-blur-sm transition flex items-center gap-2 border
+              ${isSaved 
+                ? "bg-red-600/80 border-red-500 text-white hover:bg-red-600" 
+                : "bg-white/10 border-white/20 text-white hover:bg-white/20"}
+            `}
+          >
+            {isSaved ? (
+              <>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                Tersimpan
+              </>
+            ) : (
+              <>
+                <span>+</span> My List
+              </>
+            )}
+          </button>
         </div>
       </div>
     </div>

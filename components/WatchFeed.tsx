@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useLibrary } from "@/hooks/useLibrary";
 
 // --- TIPE DATA ---
 type EpisodeRaw = any;
@@ -29,16 +30,24 @@ function pick720(ep: EpisodeRaw) {
 // --- COMPONENT UTAMA ---
 export default function WatchFeed({ bookId }: { bookId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  
+  // Panggil hook library
+  const { addToHistory, toggleMyList, isInList } = useLibrary();
+
+  const initialEpParam = searchParams.get("ep");
+  const initialIndex = initialEpParam ? Math.max(0, parseInt(initialEpParam) - 1) : 0;
+
   const [detail, setDetail] = useState<any>(null);
   const [episodes, setEpisodes] = useState<EpisodeRaw[]>([]);
-  
-  const [limit, setLimit] = useState(5); 
+  const [limit, setLimit] = useState(Math.max(5, initialIndex + 3)); 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
   const [showEpList, setShowEpList] = useState(false);
 
+  const hasAutoScrolled = useRef(false);
   const aliveRef = useRef(true);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
@@ -60,13 +69,17 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
 
         if (!aliveRef.current) return;
 
-        const book = dJson?.data?.data?.book || dJson?.data?.book || null;
+        // DEBUG: Cek data mentah masuk gak
+        console.log("📡 API Data Received:", { dJson, eJson });
+
+        const book = dJson?.data?.data?.book || dJson?.data?.book || dJson?.data || null;
         const eps = Array.isArray(eJson?.data) ? eJson.data : (Array.isArray(eJson) ? eJson : []);
 
         setDetail(book);
         setEpisodes(eps);
       } catch (e: any) {
         if (aliveRef.current) setErr(e?.message || "Gagal memuat drama");
+        console.error("❌ API Error:", e);
       } finally {
         if (aliveRef.current) setLoading(false);
       }
@@ -115,6 +128,17 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
     return () => observer.disconnect();
   }, [feed.length]);
 
+  // Auto Scroll
+  useEffect(() => {
+    if (!loading && feed.length > 0 && !hasAutoScrolled.current) {
+      const targetEl = itemRefs.current[initialIndex];
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: "auto", block: "start" });
+        hasAutoScrolled.current = true;
+      }
+    }
+  }, [loading, feed.length, initialIndex]);
+
   // Navigation Logic
   const jumpToEpisode = useCallback((index: number) => {
     if (index >= limit) {
@@ -126,6 +150,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
       itemRefs.current[index]?.scrollIntoView({ behavior: "smooth" });
     }
     setShowEpList(false);
+    setActiveIndex(index);
   }, [limit]);
 
   // Keyboard Listener
@@ -151,8 +176,38 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
     const next = activeIndex + 1;
     if (next < episodes.length) jumpToEpisode(next);
   };
+   
+  // ---------------------------------------------------------
+  // 🕵️‍♂️ DEBUGGING SECTION: AUTO SAVE HISTORY
+  // ---------------------------------------------------------
+  useEffect(() => {
+    // 1. Cek Kondisi Data
+    console.log(`🔍 Try Save History - ActiveIndex: ${activeIndex}`, {
+      detailAda: !!detail,
+      jumlahEps: episodes.length,
+      bookId
+    });
 
-  // --- INFO HEADER (Current / Total) ---
+    if (detail && episodes.length > 0) {
+      const currentEp = activeIndex + 1; 
+      
+      console.log("🚀 Syarat Terpenuhi! Saving...");
+      
+      addToHistory({
+        bookId: String(bookId),
+        bookName: detail.bookName || "Judul Error", // Fallback judul
+        cover: detail.bookCover || detail.coverWap || "https://placehold.co/100?text=NoCover", // Fallback cover
+        lastEpIndex: currentEp,
+        timestamp: Date.now(),
+      });
+    } else {
+      console.log("⚠️ Gagal Save: Data Detail/Episodes belum siap.");
+    }
+  }, [detail, activeIndex, bookId, episodes.length]); 
+  // ---------------------------------------------------------
+
+  const isSaved = isInList(String(bookId));
+   
   const currentEpNum = feed[activeIndex]?.epNo || (activeIndex + 1);
   const totalEpNum = episodes.length > 0 ? episodes.length : "-";
   const currentPoster = feed[activeIndex]?.poster || "";
@@ -161,8 +216,8 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
 
   return (
     <div className="relative h-[100svh] bg-[#0a0a0a] text-white overflow-hidden font-sans selection:bg-red-500/30">
-      
-      {/* === AMBIENT BACKGROUND === */}
+       
+      {/* AMBIENT BACKGROUND */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
         <div 
           className="absolute inset-0 bg-cover bg-center transition-all duration-1000 ease-in-out opacity-30 blur-[90px] scale-110"
@@ -171,7 +226,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
         <div className="absolute inset-0 bg-black/70" />
       </div>
 
-      {/* === HEADER BARU (LEBIH RAPI) === */}
+      {/* HEADER */}
       <div className="absolute top-0 left-0 right-0 z-50 px-4 py-3 flex items-center gap-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent">
         <button 
           onClick={() => router.back()} 
@@ -180,7 +235,6 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
           <svg className="w-5 h-5 text-white/90 group-hover:text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
         
-        {/* Info Judul & Episode */}
         <div className="flex-1 min-w-0 flex flex-col justify-center">
           <h1 className="font-bold text-sm sm:text-base truncate text-white drop-shadow-lg tracking-tight leading-tight">
             {detail?.bookName || "Memuat Drama..."}
@@ -199,7 +253,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
         </div>
       </div>
 
-      {/* === FEED CONTAINER === */}
+      {/* FEED CONTAINER */}
       <div 
         ref={containerRef}
         className="relative z-10 h-full overflow-y-scroll snap-y snap-mandatory scroll-smooth no-scrollbar"
@@ -211,7 +265,6 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
             ref={(el) => { itemRefs.current[idx] = el; }}
             className="h-full w-full snap-start flex justify-center items-center p-0 md:p-6" 
           >
-            {/* Wrapper Card */}
             <div className="relative w-full h-full md:max-w-[420px] md:h-[90vh] md:max-h-[850px] bg-black md:rounded-3xl overflow-hidden md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] md:border md:border-white/10 ring-1 ring-white/5">
               
               <VideoPlayer 
@@ -224,7 +277,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
               {/* OVERLAY UI */}
               <div className="absolute inset-0 pointer-events-none flex flex-col justify-end p-5 pb-8 bg-gradient-to-t from-black via-black/20 to-transparent">
                 <div className="flex items-end gap-4">
-                  
+                   
                   {/* TEXT INFO (Left) */}
                   <div className="flex-1 space-y-2 pointer-events-auto pb-1">
                     <div className="flex items-center gap-2">
@@ -239,6 +292,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
 
                   {/* SIDE ACTIONS (Right) */}
                   <div className="flex flex-col gap-4 items-center pointer-events-auto pb-2">
+                    
                     {/* List Episode */}
                     <button onClick={() => setShowEpList(true)} className="group flex flex-col items-center gap-1">
                       <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/10 flex items-center justify-center active:scale-90 hover:bg-white/20 transition shadow-lg">
@@ -247,17 +301,41 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
                       <span className="text-[9px] font-medium text-white/80 drop-shadow">Eps</span>
                     </button>
 
-                     {/* Like */}
-                     <button className="group flex flex-col items-center gap-1">
-                      <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/10 flex items-center justify-center active:scale-90 hover:bg-white/20 transition shadow-lg">
-                         <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+                     {/* TOMBOL MY LIST */}
+                     <button 
+                       onClick={() => {
+                          console.log("Klik Tombol My List", detail);
+                          if (detail) {
+                            toggleMyList({
+                              bookId: String(bookId),
+                              bookName: detail.bookName,
+                              cover: detail.bookCover || detail.coverWap || "",
+                              timestamp: Date.now()
+                            });
+                          }
+                       }}
+                       className="group flex flex-col items-center gap-1"
+                      >
+                      <div className={`
+                        w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center transition shadow-lg active:scale-90
+                        ${isSaved 
+                          ? "bg-red-600 border-red-500 text-white" 
+                          : "bg-white/10 border-white/10 text-white hover:bg-white/20"}
+                      `}>
+                         {isSaved ? (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                         ) : (
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                         )}
                       </div>
-                      <span className="text-[9px] font-medium text-white/80 drop-shadow">Like</span>
+                      <span className="text-[9px] font-medium text-white/80 drop-shadow">
+                        {isSaved ? "Saved" : "My List"}
+                      </span>
                     </button>
+
                   </div>
                 </div>
               </div>
-
             </div>
           </div>
         ))}
@@ -271,7 +349,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
         )}
       </div>
 
-      {/* === EPISODE DRAWER === */}
+      {/* EPISODE DRAWER */}
       {showEpList && (
         <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
           <div 
@@ -313,14 +391,13 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   );
 }
 
-// --- VIDEO PLAYER + PROGRESS BAR + MUTE POJOK ATAS ---
+// --- VIDEO PLAYER (Tetap Sama) ---
 function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: string, isActive: boolean, onEnded: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeeding, setIsSpeeding] = useState(false);
   const [progress, setProgress] = useState(0);
-
   const pressTimer = useRef<NodeJS.Timeout>(null);
   const isLongPress = useRef(false);
 
@@ -411,7 +488,6 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         onEnded={onEnded}
       />
       
-      {/* 2x Speed Indicator */}
       {isSpeeding && (
         <div className="absolute top-8 inset-x-0 flex justify-center z-30 animate-in fade-in zoom-in duration-200 pointer-events-none">
            <div className="bg-black/60 backdrop-blur-md px-4 py-1.5 rounded-full text-white text-xs font-bold flex items-center gap-1.5 shadow-xl">
@@ -420,7 +496,6 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         </div>
       )}
 
-      {/* --- MUTE BUTTON (POJOK KANAN ATAS VIDEO) --- */}
       <button 
         onClick={toggleMute}
         className="absolute top-4 right-4 z-40 p-2.5 bg-black/30 hover:bg-black/50 backdrop-blur-md rounded-full text-white/90 hover:text-white transition-all transform hover:scale-105 active:scale-95"
@@ -432,7 +507,6 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         )}
       </button>
 
-      {/* Play Icon (Tengah) */}
       {!isPlaying && !isSpeeding && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">
           <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md shadow-2xl scale-100 animate-in zoom-in duration-300">
@@ -441,7 +515,6 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         </div>
       )}
 
-      {/* Progress Bar */}
       <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/10 z-50">
           <div 
             className="h-full bg-red-600 transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(220,38,38,0.8)]"
