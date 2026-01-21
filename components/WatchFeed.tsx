@@ -308,14 +308,21 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   );
 }
 
-// --- VIDEO PLAYER (MUTE ADDED) ---
+// --- VIDEO PLAYER (FIX: SCROLL AMAN & GAK GAMPANG KE-PAUSE) ---
 function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: string, isActive: boolean, onEnded: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  
+  // State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isSpeeding, setIsSpeeding] = useState(false);
-  const [isMuted, setIsMuted] = useState(false); // 🔥 State Mute
+  const [isMuted, setIsMuted] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  // Refs Logic Sentuhan
+  const pressTimer = useRef<NodeJS.Timeout | null>(null);
+  const isScrolling = useRef(false); // 🔥 TRACKING SCROLL
+
+  // Logic Player (Play/Pause/Reset)
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -324,7 +331,7 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
       const timer = setTimeout(() => {
         vid.currentTime = 0; 
         vid.playbackRate = 1.0;
-        vid.muted = isMuted; // Sync mute state
+        vid.muted = isMuted;
         vid.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
       }, 50); 
       return () => clearTimeout(timer);
@@ -334,26 +341,53 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
     }
   }, [isActive, src]);
 
-  // Handle Touch/Click
-  const pressTimer = useRef<NodeJS.Timeout | null>(null);
+  // --- HANDLER SENTUHAN ---
 
   const handleStart = (e: any) => {
+    isScrolling.current = false; // Reset status scroll tiap kali sentuh layar
+    
+    // Cuma prevent default kalau pake Mouse (biar gak drag gambar).
+    // Kalo TOUCH jangan di-prevent, biar scroll tetep jalan!
     if (e.type === 'mousedown') e.preventDefault();
+    
+    // Timer buat 2x Speed (Long Press)
     pressTimer.current = setTimeout(() => {
-      if (videoRef.current) {
+      // Kalo lagi scroll, jangan aktifin speed
+      if (!isScrolling.current && videoRef.current) {
         videoRef.current.playbackRate = 2.0;
         setIsSpeeding(true);
       }
     }, 200);
   };
 
+  const handleMove = () => {
+    // 🔥 Kalo jari gerak, tandanya lagi SCROLL
+    isScrolling.current = true;
+    
+    // Batalin timer 2x speed kalo ternyata user mau scroll
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+  };
+
   const handleEnd = (e: any) => {
     if (e.type === 'mouseup') e.preventDefault();
+    
+    // Bersihin timer
     if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
 
+    // 🔥 CEK: Kalo tadi gerak (scroll), JANGAN lakuin apa-apa (Jangan pause!)
+    if (isScrolling.current) {
+      isScrolling.current = false; // Reset
+      return; 
+    }
+
+    // Logic 2x Speed selesai
     if (isSpeeding) {
       if (videoRef.current) { videoRef.current.playbackRate = 1.0; setIsSpeeding(false); }
     } else {
+      // Logic Toggle Play/Pause (Cuma jalan kalo GAK scroll)
       if (videoRef.current) {
         if (videoRef.current.paused) { videoRef.current.play().catch(()=>{}); setIsPlaying(true); }
         else { videoRef.current.pause(); setIsPlaying(false); }
@@ -362,7 +396,7 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
   };
 
   const toggleMute = (e: any) => {
-    e.stopPropagation(); // 🔥 Penting! Biar gak pause video pas klik mute
+    e.stopPropagation();
     if (videoRef.current) {
       const next = !videoRef.current.muted;
       videoRef.current.muted = next;
@@ -371,7 +405,8 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
   };
 
   return (
-    <div className="relative w-full h-full bg-black select-none touch-none">
+    // 🔥 Ganti 'touch-none' jadi 'touch-pan-y' biar browser bolehin scroll vertikal
+    <div className="relative w-full h-full bg-black select-none touch-pan-y">
       <video
         ref={videoRef}
         src={src}
@@ -385,14 +420,18 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         onEnded={onEnded}
       />
       
-      {/* Invisible Layer buat Touch (z-10) */}
+      {/* Invisible Layer Touch */}
       <div 
         className="absolute inset-0 z-10"
-        onMouseDown={handleStart} onMouseUp={handleEnd} onMouseLeave={handleEnd}
-        onTouchStart={handleStart} onTouchEnd={handleEnd}
+        onMouseDown={handleStart} 
+        onMouseUp={handleEnd} 
+        onMouseLeave={handleEnd}
+        onTouchStart={handleStart} 
+        onTouchMove={handleMove} // 🔥 Tambahin ini buat deteksi gerakan
+        onTouchEnd={handleEnd}
       />
 
-      {/* 🔥 TOMBOL MUTE (z-30 biar paling atas) */}
+      {/* Tombol Mute */}
       <button 
         onClick={toggleMute}
         onTouchEnd={(e) => { e.preventDefault(); toggleMute(e); }}
@@ -405,12 +444,14 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         )}
       </button>
 
+      {/* Indikator Speed */}
       {isSpeeding && (
          <div className="absolute top-10 inset-x-0 flex justify-center z-20 pointer-events-none">
            <span className="bg-black/50 text-white text-xs px-3 py-1 rounded-full backdrop-blur">⚡ 2x Speed</span>
          </div>
       )}
 
+      {/* Icon Play Tengah */}
       {!isPlaying && !isSpeeding && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
            <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur shadow">
@@ -419,6 +460,7 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         </div>
       )}
 
+      {/* Progress Bar */}
       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20 z-20">
          <div className="h-full bg-red-600 transition-all duration-100" style={{ width: `${progress}%` }} />
       </div>
