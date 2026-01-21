@@ -219,13 +219,13 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
                 onEnded={handleNext}
               />
 
-              {/* OVERLAY UI 
-                  🔥 FIX: Tambahin z-20 biar dia di atas layer video (z-10).
-                  Tanpa ini, tombol "Eps" gak bisa diklik.
-              */}
-              <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-end p-4 pb-8 bg-gradient-to-t from-black/90 via-black/20 to-transparent">
+                            {/* OVERLAY UI */}
+              {/* Pastikan Z-Index 40 biar di atas layer sentuh video (Z-10) */}
+              <div className="absolute inset-0 z-40 pointer-events-none flex flex-col justify-end p-4 pb-8 bg-gradient-to-t from-black/90 via-black/20 to-transparent">
                 <div className="flex items-end gap-3">
                   <div className="flex-1 space-y-1.5 pointer-events-auto">
+                     {/* ... Info Judul/Eps ... */}
+                     {/* Kalau mau teks bisa dicopy juga tambahin onClick stopPropagation kalau perlu, tapi teks biasanya aman */}
                     <span className="bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded">
                       Ep. {item.epNo}
                     </span>
@@ -235,22 +235,33 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
                   </div>
 
                   <div className="flex flex-col gap-3 items-center pointer-events-auto">
-                    {/* Tombol EPS (Sekarang bisa diklik!) */}
-                    <button onClick={() => setShowEpList(true)} className="flex flex-col items-center gap-1 group cursor-pointer z-30">
+                    
+                    {/* TOMBOL EPS */}
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); // 🔥 WAJIB: Biar gak pause video
+                        setShowEpList(true); 
+                      }} 
+                      className="flex flex-col items-center gap-1 group cursor-pointer"
+                    >
                       <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center group-active:scale-90 transition border border-white/10 hover:bg-white/20">
                         <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
                       </div>
                       <span className="text-[9px] font-medium text-white/80">Eps</span>
                     </button>
 
+                     {/* TOMBOL MY LIST */}
                      <button 
-                       onClick={() => detail && toggleMyList({
-                          bookId: String(bookId),
-                          bookName: detail.bookName,
-                          cover: detail.bookCover || detail.coverWap || "",
-                          timestamp: Date.now()
-                       })}
-                       className="flex flex-col items-center gap-1 group cursor-pointer z-30"
+                       onClick={(e) => {
+                          e.stopPropagation(); // 🔥 WAJIB: Biar gak pause video
+                          if (detail) toggleMyList({
+                            bookId: String(bookId),
+                            bookName: detail.bookName,
+                            cover: detail.bookCover || detail.coverWap || "",
+                            timestamp: Date.now()
+                          });
+                       }}
+                       className="flex flex-col items-center gap-1 group cursor-pointer"
                       >
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center group-active:scale-90 transition border backdrop-blur-md ${isSaved ? "bg-red-600 border-red-500 text-white" : "bg-white/10 border-white/10 text-white"}`}>
                          {isSaved ? (
@@ -264,6 +275,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
                   </div>
                 </div>
               </div>
+
 
             </div>
           </div>
@@ -308,7 +320,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   );
 }
 
-// --- VIDEO PLAYER (FIX: SCROLL AMAN & GAK GAMPANG KE-PAUSE) ---
+// --- VIDEO PLAYER (FINAL FIX: SCROLL TOLERANCE & EVENT BUBBLING) ---
 function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: string, isActive: boolean, onEnded: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   
@@ -320,9 +332,11 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
 
   // Refs Logic Sentuhan
   const pressTimer = useRef<NodeJS.Timeout | null>(null);
-  const isScrolling = useRef(false); // 🔥 TRACKING SCROLL
+  const startX = useRef(0);
+  const startY = useRef(0);
+  const isDragging = useRef(false);
 
-  // Logic Player (Play/Pause/Reset)
+  // Logic Player (Sync State)
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -341,53 +355,63 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
     }
   }, [isActive, src]);
 
-  // --- HANDLER SENTUHAN ---
+  // --- HANDLER SENTUHAN CERDAS ---
 
   const handleStart = (e: any) => {
-    isScrolling.current = false; // Reset status scroll tiap kali sentuh layar
+    // Stop event biar gak nembus ke elemen lain
+    // e.stopPropagation(); 
+    // ^ Jangan stop propagation di sini biar scroll container tetep jalan
+
+    isDragging.current = false;
     
-    // Cuma prevent default kalau pake Mouse (biar gak drag gambar).
-    // Kalo TOUCH jangan di-prevent, biar scroll tetep jalan!
-    if (e.type === 'mousedown') e.preventDefault();
+    // Simpan posisi awal jari
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    startX.current = clientX;
+    startY.current = clientY;
+
+    if (e.type === 'mousedown') e.preventDefault(); // Biar gak drag gambar di PC
     
-    // Timer buat 2x Speed (Long Press)
+    // Timer Long Press (2x Speed)
     pressTimer.current = setTimeout(() => {
-      // Kalo lagi scroll, jangan aktifin speed
-      if (!isScrolling.current && videoRef.current) {
+      if (!isDragging.current && videoRef.current) {
         videoRef.current.playbackRate = 2.0;
         setIsSpeeding(true);
       }
     }, 200);
   };
 
-  const handleMove = () => {
-    // 🔥 Kalo jari gerak, tandanya lagi SCROLL
-    isScrolling.current = true;
+  const handleMove = (e: any) => {
+    if (isDragging.current) return; // Udah fix scroll, gak usah hitung lagi
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     
-    // Batalin timer 2x speed kalo ternyata user mau scroll
-    if (pressTimer.current) {
-      clearTimeout(pressTimer.current);
-      pressTimer.current = null;
+    const diffX = Math.abs(clientX - startX.current);
+    const diffY = Math.abs(clientY - startY.current);
+
+    // 🔥 TOLERANSI 10px: Kalau gerak dikit doang, dianggap GAK SCROLL (tetep Tap)
+    if (diffY > 10 || diffX > 10) {
+      isDragging.current = true;
+      // Batalin timer speed
+      if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
     }
   };
 
   const handleEnd = (e: any) => {
     if (e.type === 'mouseup') e.preventDefault();
-    
-    // Bersihin timer
     if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
 
-    // 🔥 CEK: Kalo tadi gerak (scroll), JANGAN lakuin apa-apa (Jangan pause!)
-    if (isScrolling.current) {
-      isScrolling.current = false; // Reset
+    // 🔥 CEK: Kalau tadi jari gerak jauh (Scroll), jangan Pause!
+    if (isDragging.current) {
+      isDragging.current = false;
       return; 
     }
 
-    // Logic 2x Speed selesai
     if (isSpeeding) {
       if (videoRef.current) { videoRef.current.playbackRate = 1.0; setIsSpeeding(false); }
     } else {
-      // Logic Toggle Play/Pause (Cuma jalan kalo GAK scroll)
+      // Toggle Play/Pause
       if (videoRef.current) {
         if (videoRef.current.paused) { videoRef.current.play().catch(()=>{}); setIsPlaying(true); }
         else { videoRef.current.pause(); setIsPlaying(false); }
@@ -396,7 +420,7 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
   };
 
   const toggleMute = (e: any) => {
-    e.stopPropagation();
+    e.stopPropagation(); // 🔥 PENTING: Biar klik Mute gak dianggap klik Layar (Pause)
     if (videoRef.current) {
       const next = !videoRef.current.muted;
       videoRef.current.muted = next;
@@ -405,7 +429,6 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
   };
 
   return (
-    // 🔥 Ganti 'touch-none' jadi 'touch-pan-y' biar browser bolehin scroll vertikal
     <div className="relative w-full h-full bg-black select-none touch-pan-y">
       <video
         ref={videoRef}
@@ -420,22 +443,22 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
         onEnded={onEnded}
       />
       
-      {/* Invisible Layer Touch */}
+      {/* Layer Sentuh (Z-Index 10) */}
       <div 
         className="absolute inset-0 z-10"
         onMouseDown={handleStart} 
         onMouseUp={handleEnd} 
         onMouseLeave={handleEnd}
         onTouchStart={handleStart} 
-        onTouchMove={handleMove} // 🔥 Tambahin ini buat deteksi gerakan
+        onTouchMove={handleMove}
         onTouchEnd={handleEnd}
       />
 
-      {/* Tombol Mute */}
+      {/* Tombol Mute (Z-Index 50 - Paling Atas) */}
       <button 
         onClick={toggleMute}
         onTouchEnd={(e) => { e.preventDefault(); toggleMute(e); }}
-        className="absolute top-4 right-4 z-30 p-2 bg-black/40 backdrop-blur rounded-full text-white/80 hover:text-white"
+        className="absolute top-4 right-4 z-50 p-2 bg-black/40 backdrop-blur rounded-full text-white/80 hover:text-white cursor-pointer"
       >
         {isMuted ? (
            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
@@ -467,3 +490,4 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
     </div>
   );
 }
+
