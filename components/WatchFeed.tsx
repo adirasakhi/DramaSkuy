@@ -31,8 +31,6 @@ function pick720(ep: EpisodeRaw) {
 export default function WatchFeed({ bookId }: { bookId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  
-  // Panggil hook library
   const { addToHistory, toggleMyList, isInList } = useLibrary();
 
   const initialEpParam = searchParams.get("ep");
@@ -40,7 +38,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
 
   const [detail, setDetail] = useState<any>(null);
   const [episodes, setEpisodes] = useState<EpisodeRaw[]>([]);
-  const [limit, setLimit] = useState(Math.max(5, initialIndex + 3)); 
+  const [limit, setLimit] = useState(Math.max(3, initialIndex + 2)); 
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -48,15 +46,12 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   const [showEpList, setShowEpList] = useState(false);
 
   const hasAutoScrolled = useRef(false);
-  const aliveRef = useRef(true);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   // Fetch Data
   useEffect(() => {
-    aliveRef.current = true;
     setLoading(true);
-
     (async () => {
       try {
         const [dRes, eRes] = await Promise.all([
@@ -67,25 +62,17 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
         const dJson = await dRes.json();
         const eJson = await eRes.json();
 
-        if (!aliveRef.current) return;
-
-        // DEBUG: Cek data mentah masuk gak
-        console.log("📡 API Data Received:", { dJson, eJson });
-
         const book = dJson?.data?.data?.book || dJson?.data?.book || dJson?.data || null;
         const eps = Array.isArray(eJson?.data) ? eJson.data : (Array.isArray(eJson) ? eJson : []);
 
         setDetail(book);
         setEpisodes(eps);
       } catch (e: any) {
-        if (aliveRef.current) setErr(e?.message || "Gagal memuat drama");
-        console.error("❌ API Error:", e);
+        setErr("Gagal memuat drama");
       } finally {
-        if (aliveRef.current) setLoading(false);
+        setLoading(false);
       }
     })();
-
-    return () => { aliveRef.current = false; };
   }, [bookId]);
 
   // Data Processing
@@ -110,104 +97,78 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
     }).filter((x) => x.video);
   }, [episodes, limit, detail, indexOffset]);
 
-  // Observer
+  // Observer & Infinite Scroll
   useEffect(() => {
     const root = containerRef.current;
-    if (!root) return;
+    if (!root || feed.length === 0) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
         const best = entries.sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (best && best.isIntersecting) {
+        if (best && best.isIntersecting && best.intersectionRatio > 0.5) {
           const idx = Number((best.target as HTMLElement).dataset.index);
           setActiveIndex(idx);
+
+          if (idx >= limit - 2 && limit < episodes.length) {
+            setLimit((prev) => Math.min(prev + 5, episodes.length));
+          }
         }
       },
-      { root, threshold: 0.6 }
+      { root, threshold: 0.5 }
     );
+
     itemRefs.current.forEach((el) => el && observer.observe(el));
     return () => observer.disconnect();
-  }, [feed.length]);
+  }, [feed.length, limit, episodes.length]);
 
   // Auto Scroll
   useEffect(() => {
     if (!loading && feed.length > 0 && !hasAutoScrolled.current) {
-      const targetEl = itemRefs.current[initialIndex];
-      if (targetEl) {
-        targetEl.scrollIntoView({ behavior: "auto", block: "start" });
-        hasAutoScrolled.current = true;
-      }
+      setTimeout(() => {
+        const targetEl = itemRefs.current[initialIndex];
+        if (targetEl) {
+          targetEl.scrollIntoView({ behavior: "auto", block: "start" });
+          hasAutoScrolled.current = true;
+        }
+      }, 100);
     }
   }, [loading, feed.length, initialIndex]);
 
-  // Navigation Logic
+  // Navigation
   const jumpToEpisode = useCallback((index: number) => {
     if (index >= limit) {
-      setLimit(index + 5);
+      setLimit(index + 3);
       setTimeout(() => {
         itemRefs.current[index]?.scrollIntoView({ behavior: "smooth" });
+        setActiveIndex(index);
       }, 100);
     } else {
       itemRefs.current[index]?.scrollIntoView({ behavior: "smooth" });
+      setActiveIndex(index);
     }
     setShowEpList(false);
-    setActiveIndex(index);
   }, [limit]);
-
-  // Keyboard Listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (showEpList) return;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        const next = activeIndex + 1;
-        if (next < episodes.length) jumpToEpisode(next);
-      } 
-      else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        const prev = activeIndex - 1;
-        if (prev >= 0) jumpToEpisode(prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeIndex, episodes.length, showEpList, jumpToEpisode]);
 
   const handleNext = () => {
     const next = activeIndex + 1;
     if (next < episodes.length) jumpToEpisode(next);
   };
    
-  // ---------------------------------------------------------
-  // 🕵️‍♂️ DEBUGGING SECTION: AUTO SAVE HISTORY
-  // ---------------------------------------------------------
+  // History Save
   useEffect(() => {
-    // 1. Cek Kondisi Data
-    console.log(`🔍 Try Save History - ActiveIndex: ${activeIndex}`, {
-      detailAda: !!detail,
-      jumlahEps: episodes.length,
-      bookId
-    });
-
     if (detail && episodes.length > 0) {
       const currentEp = activeIndex + 1; 
-      
-      console.log("🚀 Syarat Terpenuhi! Saving...");
-      
       addToHistory({
         bookId: String(bookId),
-        bookName: detail.bookName || "Judul Error", // Fallback judul
-        cover: detail.bookCover || detail.coverWap || "https://placehold.co/100?text=NoCover", // Fallback cover
+        bookName: detail.bookName || "Drama",
+        cover: detail.bookCover || detail.coverWap || "",
         lastEpIndex: currentEp,
         timestamp: Date.now(),
       });
-    } else {
-      console.log("⚠️ Gagal Save: Data Detail/Episodes belum siap.");
     }
-  }, [detail, activeIndex, bookId, episodes.length]); 
-  // ---------------------------------------------------------
+  }, [detail, activeIndex, bookId, episodes.length]);
 
   const isSaved = isInList(String(bookId));
-   
   const currentEpNum = feed[activeIndex]?.epNo || (activeIndex + 1);
   const totalEpNum = episodes.length > 0 ? episodes.length : "-";
   const currentPoster = feed[activeIndex]?.poster || "";
@@ -215,57 +176,41 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   if (err) return <div className="h-screen flex items-center justify-center text-red-500 bg-[#0a0a0a]">{err}</div>;
 
   return (
-    <div className="relative h-[100svh] bg-[#0a0a0a] text-white overflow-hidden font-sans selection:bg-red-500/30">
+    <div className="relative h-[100svh] bg-[#0a0a0a] text-white overflow-hidden font-sans">
        
-      {/* AMBIENT BACKGROUND */}
+      {/* Background Blur */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
         <div 
-          className="absolute inset-0 bg-cover bg-center transition-all duration-1000 ease-in-out opacity-30 blur-[90px] scale-110"
+          className="absolute inset-0 bg-cover bg-center transition-all duration-700 ease-out opacity-20 blur-[80px] scale-110"
           style={{ backgroundImage: `url(${currentPoster})` }}
         />
-        <div className="absolute inset-0 bg-black/70" />
+        <div className="absolute inset-0 bg-black/60" />
       </div>
 
-      {/* HEADER */}
-      <div className="absolute top-0 left-0 right-0 z-50 px-4 py-3 flex items-center gap-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent">
-        <button 
-          onClick={() => router.back()} 
-          className="w-9 h-9 rounded-full bg-white/10 backdrop-blur-md border border-white/5 flex items-center justify-center hover:bg-white/20 transition group"
-        >
-          <svg className="w-5 h-5 text-white/90 group-hover:text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      {/* Header */}
+      <div className="absolute top-0 left-0 right-0 z-50 px-4 py-3 flex items-center gap-4 bg-gradient-to-b from-black/90 via-black/50 to-transparent">
+        <button onClick={() => router.back()} className="w-9 h-9 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center active:scale-90 transition">
+          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
-        
-        <div className="flex-1 min-w-0 flex flex-col justify-center">
-          <h1 className="font-bold text-sm sm:text-base truncate text-white drop-shadow-lg tracking-tight leading-tight">
-            {detail?.bookName || "Memuat Drama..."}
-          </h1>
-          <div className="flex items-center gap-2 text-[11px] text-white/60 font-medium tracking-wide mt-0.5">
-             {loading ? (
-                <span className="animate-pulse">Loading info...</span>
-             ) : (
-               <>
-                 <span className="text-red-500 font-bold">Eps {currentEpNum}</span>
-                 <span className="text-white/30">/</span>
-                 <span>{totalEpNum} Episodes</span>
-               </>
-             )}
-          </div>
+        <div className="flex-1 min-w-0">
+          <h1 className="font-bold text-sm truncate text-white drop-shadow-md">{detail?.bookName}</h1>
+          <p className="text-[10px] text-white/70">Episode {currentEpNum} / {totalEpNum}</p>
         </div>
       </div>
 
-      {/* FEED CONTAINER */}
+      {/* Feed Container */}
       <div 
         ref={containerRef}
-        className="relative z-10 h-full overflow-y-scroll snap-y snap-mandatory scroll-smooth no-scrollbar"
+        className="relative z-10 h-full overflow-y-scroll snap-y snap-mandatory no-scrollbar touch-pan-y"
       >
         {feed.map((item, idx) => (
           <div 
             key={item.id}
             data-index={idx}
             ref={(el) => { itemRefs.current[idx] = el; }}
-            className="h-full w-full snap-start flex justify-center items-center p-0 md:p-6" 
+            className="h-full w-full snap-start flex justify-center items-center md:p-4" 
           >
-            <div className="relative w-full h-full md:max-w-[420px] md:h-[90vh] md:max-h-[850px] bg-black md:rounded-3xl overflow-hidden md:shadow-[0_20px_50px_-12px_rgba(0,0,0,0.8)] md:border md:border-white/10 ring-1 ring-white/5">
+            <div className="relative w-full h-full md:max-w-[400px] md:rounded-2xl overflow-hidden bg-black shadow-2xl">
               
               <VideoPlayer 
                 src={item.video || ""} 
@@ -274,109 +219,81 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
                 onEnded={handleNext}
               />
 
-              {/* OVERLAY UI */}
-              <div className="absolute inset-0 pointer-events-none flex flex-col justify-end p-5 pb-8 bg-gradient-to-t from-black via-black/20 to-transparent">
-                <div className="flex items-end gap-4">
-                   
-                  {/* TEXT INFO (Left) */}
-                  <div className="flex-1 space-y-2 pointer-events-auto pb-1">
-                    <div className="flex items-center gap-2">
-                       <span className="bg-white/10 backdrop-blur-md border border-white/10 text-white text-[10px] font-bold px-2 py-0.5 rounded">
-                         Ep. {item.epNo}
-                       </span>
-                    </div>
-                    <p className="text-xs text-white/80 line-clamp-2 leading-relaxed drop-shadow-md font-medium pr-4">
-                      {item.intro || "Nonton drama seru ini full episode sub indo. Kualitas HD tanpa buffering."}
+              {/* OVERLAY UI 
+                  🔥 FIX: Tambahin z-20 biar dia di atas layer video (z-10).
+                  Tanpa ini, tombol "Eps" gak bisa diklik.
+              */}
+              <div className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-end p-4 pb-8 bg-gradient-to-t from-black/90 via-black/20 to-transparent">
+                <div className="flex items-end gap-3">
+                  <div className="flex-1 space-y-1.5 pointer-events-auto">
+                    <span className="bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded">
+                      Ep. {item.epNo}
+                    </span>
+                    <p className="text-xs text-white/90 line-clamp-2 leading-relaxed drop-shadow-md">
+                      {item.intro || "Nonton drama seru full episode."}
                     </p>
                   </div>
 
-                  {/* SIDE ACTIONS (Right) */}
-                  <div className="flex flex-col gap-4 items-center pointer-events-auto pb-2">
-                    
-                    {/* List Episode */}
-                    <button onClick={() => setShowEpList(true)} className="group flex flex-col items-center gap-1">
-                      <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md border border-white/10 flex items-center justify-center active:scale-90 hover:bg-white/20 transition shadow-lg">
+                  <div className="flex flex-col gap-3 items-center pointer-events-auto">
+                    {/* Tombol EPS (Sekarang bisa diklik!) */}
+                    <button onClick={() => setShowEpList(true)} className="flex flex-col items-center gap-1 group cursor-pointer z-30">
+                      <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center group-active:scale-90 transition border border-white/10 hover:bg-white/20">
                         <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
                       </div>
-                      <span className="text-[9px] font-medium text-white/80 drop-shadow">Eps</span>
+                      <span className="text-[9px] font-medium text-white/80">Eps</span>
                     </button>
 
-                     {/* TOMBOL MY LIST */}
                      <button 
-                       onClick={() => {
-                          console.log("Klik Tombol My List", detail);
-                          if (detail) {
-                            toggleMyList({
-                              bookId: String(bookId),
-                              bookName: detail.bookName,
-                              cover: detail.bookCover || detail.coverWap || "",
-                              timestamp: Date.now()
-                            });
-                          }
-                       }}
-                       className="group flex flex-col items-center gap-1"
+                       onClick={() => detail && toggleMyList({
+                          bookId: String(bookId),
+                          bookName: detail.bookName,
+                          cover: detail.bookCover || detail.coverWap || "",
+                          timestamp: Date.now()
+                       })}
+                       className="flex flex-col items-center gap-1 group cursor-pointer z-30"
                       >
-                      <div className={`
-                        w-10 h-10 rounded-full backdrop-blur-md border flex items-center justify-center transition shadow-lg active:scale-90
-                        ${isSaved 
-                          ? "bg-red-600 border-red-500 text-white" 
-                          : "bg-white/10 border-white/10 text-white hover:bg-white/20"}
-                      `}>
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center group-active:scale-90 transition border backdrop-blur-md ${isSaved ? "bg-red-600 border-red-500 text-white" : "bg-white/10 border-white/10 text-white"}`}>
                          {isSaved ? (
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
                          ) : (
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                          )}
                       </div>
-                      <span className="text-[9px] font-medium text-white/80 drop-shadow">
-                        {isSaved ? "Saved" : "My List"}
-                      </span>
+                      <span className="text-[9px] font-medium text-white/80">{isSaved ? "Saved" : "List"}</span>
                     </button>
-
                   </div>
                 </div>
               </div>
+
             </div>
           </div>
         ))}
-
         {feed.length < episodes.length && (
-           <div className="h-24 w-full flex items-center justify-center text-xs text-white/50 pb-10">
-              <button onClick={() => setLimit(l => l + 5)} className="px-5 py-2 bg-white/10 hover:bg-white/20 border border-white/5 rounded-full backdrop-blur-md transition">
-                 Muat Episode Lainnya...
-              </button>
-           </div>
+          <div className="h-20 flex items-center justify-center text-white/30 text-xs">
+            <span className="animate-pulse">Memuat...</span>
+          </div>
         )}
       </div>
 
-      {/* EPISODE DRAWER */}
+      {/* Drawer Episode */}
       {showEpList && (
-        <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div 
-            className="bg-[#121212]/95 backdrop-blur-xl w-full max-w-md h-[70vh] rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden border border-white/10 shadow-2xl animate-in slide-in-from-bottom-10 duration-300"
-            onClick={(e) => e.stopPropagation()}
+            className="bg-[#181818] w-full max-w-md h-[70vh] rounded-t-2xl flex flex-col overflow-hidden border-t border-white/10 animate-in slide-in-from-bottom-10 duration-300"
+            onClick={(e) => e.stopPropagation()} // Stop propagation biar gak nutup pas diklik contentnya
           >
-            <div className="p-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
-              <div>
-                <h3 className="font-bold text-base text-white">Daftar Episode</h3>
-                <p className="text-xs text-white/40 mt-0.5">Total {episodes.length} Episode</p>
-              </div>
-              <button onClick={() => setShowEpList(false)} className="p-2 bg-white/5 rounded-full hover:bg-white/10 text-white/70 hover:text-white transition">✕</button>
+            <div className="p-4 border-b border-white/5 flex items-center justify-between">
+              <h3 className="font-bold text-white">Pilih Episode</h3>
+              <button onClick={() => setShowEpList(false)} className="p-2 bg-white/10 rounded-full text-white/70 hover:bg-white/20">✕</button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-5 gap-3 content-start">
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-5 gap-2 content-start">
               {episodes.map((ep: any, i) => {
                  const num = i + indexOffset;
-                 const isCurrent = i === activeIndex;
                  return (
                    <button
                     key={i}
                     onClick={() => jumpToEpisode(i)}
-                    className={`
-                      aspect-square rounded-xl text-sm font-bold flex items-center justify-center transition-all duration-200
-                      ${isCurrent 
-                        ? "bg-red-600 text-white shadow-lg shadow-red-600/30 scale-105" 
-                        : "bg-white/5 text-white/60 hover:bg-white/10 hover:text-white"}
-                    `}
+                    className={`aspect-square rounded-lg text-sm font-bold flex items-center justify-center transition ${i === activeIndex ? "bg-red-600 text-white" : "bg-white/5 text-white/60"}`}
                    >
                      {num}
                    </button>
@@ -391,43 +308,38 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   );
 }
 
-// --- VIDEO PLAYER (Tetap Sama) ---
+// --- VIDEO PLAYER (MUTE ADDED) ---
 function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: string, isActive: boolean, onEnded: () => void }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(false);
   const [isSpeeding, setIsSpeeding] = useState(false);
+  const [isMuted, setIsMuted] = useState(false); // 🔥 State Mute
   const [progress, setProgress] = useState(0);
-  const pressTimer = useRef<NodeJS.Timeout>(null);
-  const isLongPress = useRef(false);
 
   useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid) return;
+
     if (isActive) {
-      videoRef.current?.play().catch(() => {}); 
-      setIsPlaying(true);
+      const timer = setTimeout(() => {
+        vid.currentTime = 0; 
+        vid.playbackRate = 1.0;
+        vid.muted = isMuted; // Sync mute state
+        vid.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+      }, 50); 
+      return () => clearTimeout(timer);
     } else {
-      videoRef.current?.pause();
-      if (videoRef.current) {
-        videoRef.current.currentTime = 0;
-        videoRef.current.playbackRate = 1.0;
-      }
+      vid.pause();
       setIsPlaying(false);
-      setIsSpeeding(false);
-      setProgress(0);
     }
-  }, [isActive]);
+  }, [isActive, src]);
 
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      const p = (videoRef.current.currentTime / videoRef.current.duration) * 100;
-      setProgress(isNaN(p) ? 0 : p);
-    }
-  };
+  // Handle Touch/Click
+  const pressTimer = useRef<NodeJS.Timeout | null>(null);
 
-  const handleMouseDown = () => {
-    isLongPress.current = false;
+  const handleStart = (e: any) => {
+    if (e.type === 'mousedown') e.preventDefault();
     pressTimer.current = setTimeout(() => {
-      isLongPress.current = true;
       if (videoRef.current) {
         videoRef.current.playbackRate = 2.0;
         setIsSpeeding(true);
@@ -435,91 +347,80 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
     }, 200);
   };
 
-  const handleMouseUp = () => {
-    if (pressTimer.current) clearTimeout(pressTimer.current);
-    if (isLongPress.current) {
+  const handleEnd = (e: any) => {
+    if (e.type === 'mouseup') e.preventDefault();
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+
+    if (isSpeeding) {
+      if (videoRef.current) { videoRef.current.playbackRate = 1.0; setIsSpeeding(false); }
+    } else {
       if (videoRef.current) {
-        videoRef.current.playbackRate = 1.0;
-        setIsSpeeding(false);
+        if (videoRef.current.paused) { videoRef.current.play().catch(()=>{}); setIsPlaying(true); }
+        else { videoRef.current.pause(); setIsPlaying(false); }
       }
-    } else {
-      togglePlay();
-    }
-    isLongPress.current = false;
-  };
-
-  const togglePlay = () => {
-    if (videoRef.current?.paused) {
-      videoRef.current.play();
-      setIsPlaying(true);
-    } else {
-      videoRef.current?.pause();
-      setIsPlaying(false);
     }
   };
 
-  const toggleMute = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const toggleMute = (e: any) => {
+    e.stopPropagation(); // 🔥 Penting! Biar gak pause video pas klik mute
     if (videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
+      const next = !videoRef.current.muted;
+      videoRef.current.muted = next;
+      setIsMuted(next);
     }
   };
 
   return (
-    <div 
-      className="relative w-full h-full bg-black cursor-pointer select-none group"
-      onMouseDown={handleMouseDown}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
-      onTouchStart={handleMouseDown}
-      onTouchEnd={handleMouseUp}
-    >
+    <div className="relative w-full h-full bg-black select-none touch-none">
       <video
         ref={videoRef}
         src={src}
         poster={poster}
-        muted={isMuted}
-        onTimeUpdate={handleTimeUpdate}
         className="w-full h-full object-cover"
         playsInline
         webkit-playsinline="true"
         loop={false}
+        muted={isMuted}
+        onTimeUpdate={() => videoRef.current && setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100)}
         onEnded={onEnded}
       />
       
+      {/* Invisible Layer buat Touch (z-10) */}
+      <div 
+        className="absolute inset-0 z-10"
+        onMouseDown={handleStart} onMouseUp={handleEnd} onMouseLeave={handleEnd}
+        onTouchStart={handleStart} onTouchEnd={handleEnd}
+      />
+
+      {/* 🔥 TOMBOL MUTE (z-30 biar paling atas) */}
+      <button 
+        onClick={toggleMute}
+        onTouchEnd={(e) => { e.preventDefault(); toggleMute(e); }}
+        className="absolute top-4 right-4 z-30 p-2 bg-black/40 backdrop-blur rounded-full text-white/80 hover:text-white"
+      >
+        {isMuted ? (
+           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+        ) : (
+           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+        )}
+      </button>
+
       {isSpeeding && (
-        <div className="absolute top-8 inset-x-0 flex justify-center z-30 animate-in fade-in zoom-in duration-200 pointer-events-none">
-           <div className="bg-black/60 backdrop-blur-md px-4 py-1.5 rounded-full text-white text-xs font-bold flex items-center gap-1.5 shadow-xl">
-             <span className="text-yellow-400">⚡</span> 2x Speed
+         <div className="absolute top-10 inset-x-0 flex justify-center z-20 pointer-events-none">
+           <span className="bg-black/50 text-white text-xs px-3 py-1 rounded-full backdrop-blur">⚡ 2x Speed</span>
+         </div>
+      )}
+
+      {!isPlaying && !isSpeeding && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+           <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur shadow">
+              <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
            </div>
         </div>
       )}
 
-      <button 
-        onClick={toggleMute}
-        className="absolute top-4 right-4 z-40 p-2.5 bg-black/30 hover:bg-black/50 backdrop-blur-md rounded-full text-white/90 hover:text-white transition-all transform hover:scale-105 active:scale-95"
-      >
-        {isMuted ? (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
-        ) : (
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-        )}
-      </button>
-
-      {!isPlaying && !isSpeeding && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/10 pointer-events-none">
-          <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center backdrop-blur-md shadow-2xl scale-100 animate-in zoom-in duration-300">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M8 5v14l11-7z"/></svg>
-          </div>
-        </div>
-      )}
-
-      <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/10 z-50">
-          <div 
-            className="h-full bg-red-600 transition-all duration-100 ease-linear shadow-[0_0_10px_rgba(220,38,38,0.8)]"
-            style={{ width: `${progress}%` }}
-          />
+      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20 z-20">
+         <div className="h-full bg-red-600 transition-all duration-100" style={{ width: `${progress}%` }} />
       </div>
     </div>
   );
