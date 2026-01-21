@@ -33,23 +33,24 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   const searchParams = useSearchParams();
   const { addToHistory, toggleMyList, isInList } = useLibrary();
 
-  const initialEpParam = searchParams.get("ep");
-  const initialIndex = initialEpParam ? Math.max(0, parseInt(initialEpParam) - 1) : 0;
-
+  // State Data
   const [detail, setDetail] = useState<any>(null);
   const [episodes, setEpisodes] = useState<EpisodeRaw[]>([]);
-  const [limit, setLimit] = useState(Math.max(3, initialIndex + 2)); 
+  const [limit, setLimit] = useState(5); 
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-
+  
+  // State Navigasi
+  const initialEpParam = searchParams.get("ep");
+  const initialIndex = initialEpParam ? Math.max(0, parseInt(initialEpParam) - 1) : 0;
   const [activeIndex, setActiveIndex] = useState(initialIndex);
   const [showEpList, setShowEpList] = useState(false);
 
-  const hasAutoScrolled = useRef(false);
+  // Refs
   const containerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const hasAutoScrolled = useRef(false);
 
-  // Fetch Data
+  // 1. FETCH DATA
   useEffect(() => {
     setLoading(true);
     (async () => {
@@ -67,15 +68,18 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
 
         setDetail(book);
         setEpisodes(eps);
-      } catch (e: any) {
-        setErr("Gagal memuat drama");
+        
+        // Atur limit awal biar gak berat
+        setLimit(Math.max(3, initialIndex + 2));
+      } catch (e) {
+        console.error("Error fetching drama:", e);
       } finally {
         setLoading(false);
       }
     })();
-  }, [bookId]);
+  }, [bookId, initialIndex]);
 
-  // Data Processing
+  // 2. DATA PROCESSING
   const indexOffset = useMemo(() => {
     const nums = episodes.map((e) => Number(e?.chapterIndex)).filter(Number.isFinite);
     return (nums.length && Math.min(...nums) === 0) ? 1 : 0;
@@ -97,7 +101,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
     }).filter((x) => x.video);
   }, [episodes, limit, detail, indexOffset]);
 
-  // Observer & Infinite Scroll
+  // 3. OBSERVER & SCROLL LOGIC
   useEffect(() => {
     const root = containerRef.current;
     if (!root || feed.length === 0) return;
@@ -109,6 +113,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
           const idx = Number((best.target as HTMLElement).dataset.index);
           setActiveIndex(idx);
 
+          // Infinite Scroll
           if (idx >= limit - 2 && limit < episodes.length) {
             setLimit((prev) => Math.min(prev + 5, episodes.length));
           }
@@ -121,31 +126,23 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
     return () => observer.disconnect();
   }, [feed.length, limit, episodes.length]);
 
-  // Auto Scroll
+  // Initial Scroll
   useEffect(() => {
     if (!loading && feed.length > 0 && !hasAutoScrolled.current) {
       setTimeout(() => {
-        const targetEl = itemRefs.current[initialIndex];
-        if (targetEl) {
-          targetEl.scrollIntoView({ behavior: "auto", block: "start" });
-          hasAutoScrolled.current = true;
-        }
+        itemRefs.current[initialIndex]?.scrollIntoView({ behavior: "auto", block: "start" });
+        hasAutoScrolled.current = true;
       }, 100);
     }
   }, [loading, feed.length, initialIndex]);
 
-  // Navigation
+  // 4. NAVIGATION HANDLERS
   const jumpToEpisode = useCallback((index: number) => {
-    if (index >= limit) {
-      setLimit(index + 3);
-      setTimeout(() => {
-        itemRefs.current[index]?.scrollIntoView({ behavior: "smooth" });
-        setActiveIndex(index);
-      }, 100);
-    } else {
+    if (index >= limit) setLimit(index + 3);
+    setTimeout(() => {
       itemRefs.current[index]?.scrollIntoView({ behavior: "smooth" });
       setActiveIndex(index);
-    }
+    }, 100);
     setShowEpList(false);
   }, [limit]);
 
@@ -153,44 +150,39 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
     const next = activeIndex + 1;
     if (next < episodes.length) jumpToEpisode(next);
   };
-   
-  // History Save
+
+  // 5. HISTORY SAVER
   useEffect(() => {
     if (detail && episodes.length > 0) {
-      const currentEp = activeIndex + 1; 
       addToHistory({
         bookId: String(bookId),
         bookName: detail.bookName || "Drama",
         cover: detail.bookCover || detail.coverWap || "",
-        lastEpIndex: currentEp,
+        lastEpIndex: activeIndex + 1,
         timestamp: Date.now(),
       });
     }
   }, [detail, activeIndex, bookId, episodes.length]);
 
+  // Helpers buat Props
   const isSaved = isInList(String(bookId));
   const currentEpNum = feed[activeIndex]?.epNo || (activeIndex + 1);
   const totalEpNum = episodes.length > 0 ? episodes.length : "-";
   const currentPoster = feed[activeIndex]?.poster || "";
 
-  if (err) return <div className="h-screen flex items-center justify-center text-red-500 bg-[#0a0a0a]">{err}</div>;
-
   return (
     <div className="relative h-[100svh] bg-[#0a0a0a] text-white overflow-hidden font-sans">
-       
+      
       {/* Background Blur */}
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
-        <div 
-          className="absolute inset-0 bg-cover bg-center transition-all duration-700 ease-out opacity-20 blur-[80px] scale-110"
-          style={{ backgroundImage: `url(${currentPoster})` }}
-        />
+        <div className="absolute inset-0 bg-cover bg-center opacity-20 blur-[80px] scale-110 duration-700" style={{ backgroundImage: `url(${currentPoster})` }} />
         <div className="absolute inset-0 bg-black/60" />
       </div>
 
-      {/* Header */}
-      <div className="absolute top-0 left-0 right-0 z-50 px-4 py-3 flex items-center gap-4 bg-gradient-to-b from-black/90 via-black/50 to-transparent">
-        <button onClick={() => router.back()} className="w-9 h-9 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center active:scale-90 transition">
-          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+      {/* Header Statis */}
+      <div className="absolute top-0 left-0 right-0 z-50 px-4 py-3 flex items-center gap-4 bg-gradient-to-b from-black/80 to-transparent pointer-events-none">
+        <button onClick={() => router.back()} className="w-9 h-9 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center pointer-events-auto active:scale-90 transition">
+          <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="m15 18-6-6 6-6"/></svg>
         </button>
         <div className="flex-1 min-w-0">
           <h1 className="font-bold text-sm truncate text-white drop-shadow-md">{detail?.bookName}</h1>
@@ -198,11 +190,8 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
         </div>
       </div>
 
-      {/* Feed Container */}
-      <div 
-        ref={containerRef}
-        className="relative z-10 h-full overflow-y-scroll snap-y snap-mandatory no-scrollbar touch-pan-y"
-      >
+      {/* FEED SCROLL AREA */}
+      <div ref={containerRef} className="relative z-10 h-full overflow-y-scroll snap-y snap-mandatory no-scrollbar touch-pan-y">
         {feed.map((item, idx) => (
           <div 
             key={item.id}
@@ -212,88 +201,32 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
           >
             <div className="relative w-full h-full md:max-w-[400px] md:rounded-2xl overflow-hidden bg-black shadow-2xl">
               
+              {/* COMPONENT VIDEO PLAYER + OVERLAY CONTROLS (Gabung disini) */}
               <VideoPlayer 
-                src={item.video || ""} 
-                poster={item.poster || ""} 
+                item={item}
                 isActive={idx === activeIndex}
                 onEnded={handleNext}
+                onOpenEpList={() => setShowEpList(true)}
+                onToggleMyList={() => {
+                  if (detail) toggleMyList({
+                    bookId: String(bookId),
+                    bookName: detail.bookName,
+                    cover: detail.bookCover || detail.coverWap || "",
+                    timestamp: Date.now()
+                  });
+                }}
+                isSaved={isSaved}
               />
-
-                            {/* OVERLAY UI */}
-              {/* Pastikan Z-Index 40 biar di atas layer sentuh video (Z-10) */}
-              <div className="absolute inset-0 z-40 pointer-events-none flex flex-col justify-end p-4 pb-8 bg-gradient-to-t from-black/90 via-black/20 to-transparent">
-                <div className="flex items-end gap-3">
-                  <div className="flex-1 space-y-1.5 pointer-events-auto">
-                     {/* ... Info Judul/Eps ... */}
-                     {/* Kalau mau teks bisa dicopy juga tambahin onClick stopPropagation kalau perlu, tapi teks biasanya aman */}
-                    <span className="bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded">
-                      Ep. {item.epNo}
-                    </span>
-                    <p className="text-xs text-white/90 line-clamp-2 leading-relaxed drop-shadow-md">
-                      {item.intro || "Nonton drama seru full episode."}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col gap-3 items-center pointer-events-auto">
-                    
-                    {/* TOMBOL EPS */}
-                    <button 
-                      onClick={(e) => { 
-                        e.stopPropagation(); // 🔥 WAJIB: Biar gak pause video
-                        setShowEpList(true); 
-                      }} 
-                      className="flex flex-col items-center gap-1 group cursor-pointer"
-                    >
-                      <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center group-active:scale-90 transition border border-white/10 hover:bg-white/20">
-                        <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
-                      </div>
-                      <span className="text-[9px] font-medium text-white/80">Eps</span>
-                    </button>
-
-                     {/* TOMBOL MY LIST */}
-                     <button 
-                       onClick={(e) => {
-                          e.stopPropagation(); // 🔥 WAJIB: Biar gak pause video
-                          if (detail) toggleMyList({
-                            bookId: String(bookId),
-                            bookName: detail.bookName,
-                            cover: detail.bookCover || detail.coverWap || "",
-                            timestamp: Date.now()
-                          });
-                       }}
-                       className="flex flex-col items-center gap-1 group cursor-pointer"
-                      >
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center group-active:scale-90 transition border backdrop-blur-md ${isSaved ? "bg-red-600 border-red-500 text-white" : "bg-white/10 border-white/10 text-white"}`}>
-                         {isSaved ? (
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                         ) : (
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                         )}
-                      </div>
-                      <span className="text-[9px] font-medium text-white/80">{isSaved ? "Saved" : "List"}</span>
-                    </button>
-                  </div>
-                </div>
-              </div>
-
 
             </div>
           </div>
         ))}
-        {feed.length < episodes.length && (
-          <div className="h-20 flex items-center justify-center text-white/30 text-xs">
-            <span className="animate-pulse">Memuat...</span>
-          </div>
-        )}
       </div>
 
-      {/* Drawer Episode */}
+      {/* DRAWER EPISODE LIST */}
       {showEpList && (
         <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div 
-            className="bg-[#181818] w-full max-w-md h-[70vh] rounded-t-2xl flex flex-col overflow-hidden border-t border-white/10 animate-in slide-in-from-bottom-10 duration-300"
-            onClick={(e) => e.stopPropagation()} // Stop propagation biar gak nutup pas diklik contentnya
-          >
+          <div className="bg-[#181818] w-full max-w-md h-[70vh] rounded-t-2xl flex flex-col overflow-hidden border-t border-white/10 animate-in slide-in-from-bottom-10 duration-300" onClick={(e) => e.stopPropagation()}>
             <div className="p-4 border-b border-white/5 flex items-center justify-between">
               <h3 className="font-bold text-white">Pilih Episode</h3>
               <button onClick={() => setShowEpList(false)} className="p-2 bg-white/10 rounded-full text-white/70 hover:bg-white/20">✕</button>
@@ -320,23 +253,38 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   );
 }
 
-// --- VIDEO PLAYER (FINAL FIX: SCROLL TOLERANCE & EVENT BUBBLING) ---
-function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: string, isActive: boolean, onEnded: () => void }) {
+// --- VIDEO PLAYER + OVERLAY (THE "SAFE" SOLUTION) ---
+// Semua logic UI & Kontrol ada di sini biar aman & sinkron
+function VideoPlayer({ 
+  item, isActive, onEnded, onOpenEpList, onToggleMyList, isSaved 
+}: { 
+  item: FeedItem, isActive: boolean, onEnded: () => void, 
+  onOpenEpList: () => void, onToggleMyList: () => void, isSaved: boolean 
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   
   // State
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isSpeeding, setIsSpeeding] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [showControls, setShowControls] = useState(true); // 🔥 VISIBILITY STATE
   const [progress, setProgress] = useState(0);
 
-  // Refs Logic Sentuhan
-  const pressTimer = useRef<NodeJS.Timeout | null>(null);
-  const startX = useRef(0);
-  const startY = useRef(0);
-  const isDragging = useRef(false);
+  const controlsTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // Logic Player (Sync State)
+  // 1. AUTO-HIDE LOGIC
+  const resetControlsTimer = useCallback(() => {
+    setShowControls(true);
+    if (controlsTimer.current) clearTimeout(controlsTimer.current);
+    
+    // Sembunyikan setelah 4 detik (kalo lagi play)
+    if (isPlaying) {
+      controlsTimer.current = setTimeout(() => {
+        setShowControls(false);
+      }, 4000);
+    }
+  }, [isPlaying]);
+
+  // 2. VIDEO SYNC
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -344,150 +292,141 @@ function VideoPlayer({ src, poster, isActive, onEnded }: { src: string, poster: 
     if (isActive) {
       const timer = setTimeout(() => {
         vid.currentTime = 0; 
-        vid.playbackRate = 1.0;
         vid.muted = isMuted;
-        vid.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
+        vid.play().then(() => {
+          setIsPlaying(true);
+          resetControlsTimer(); // Mulai timer pas play
+        }).catch(() => setIsPlaying(false));
       }, 50); 
       return () => clearTimeout(timer);
     } else {
       vid.pause();
       setIsPlaying(false);
+      setShowControls(true); // Reset controls jadi muncul pas geser
     }
-  }, [isActive, src]);
+  }, [isActive, item.video]);
 
-  // --- HANDLER SENTUHAN CERDAS ---
+  // Update timer kalau state play berubah
+  useEffect(() => {
+    resetControlsTimer();
+  }, [isPlaying, resetControlsTimer]);
 
-  const handleStart = (e: any) => {
-    // Stop event biar gak nembus ke elemen lain
-    // e.stopPropagation(); 
-    // ^ Jangan stop propagation di sini biar scroll container tetep jalan
-
-    isDragging.current = false;
-    
-    // Simpan posisi awal jari
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    startX.current = clientX;
-    startY.current = clientY;
-
-    if (e.type === 'mousedown') e.preventDefault(); // Biar gak drag gambar di PC
-    
-    // Timer Long Press (2x Speed)
-    pressTimer.current = setTimeout(() => {
-      if (!isDragging.current && videoRef.current) {
-        videoRef.current.playbackRate = 2.0;
-        setIsSpeeding(true);
-      }
-    }, 200);
+  // 3. HANDLERS
+  const handleTapScreen = () => {
+    // 🔥 PENTING: Tap layar CUMA buat munculin controls, BUKAN pause video.
+    // Ini solusi "Aman" biar scroll gak nge-pause.
+    resetControlsTimer();
   };
 
-  const handleMove = (e: any) => {
-    if (isDragging.current) return; // Udah fix scroll, gak usah hitung lagi
-
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  const togglePlay = (e: any) => {
+    e.stopPropagation();
+    const vid = videoRef.current;
+    if (!vid) return;
     
-    const diffX = Math.abs(clientX - startX.current);
-    const diffY = Math.abs(clientY - startY.current);
-
-    // 🔥 TOLERANSI 10px: Kalau gerak dikit doang, dianggap GAK SCROLL (tetep Tap)
-    if (diffY > 10 || diffX > 10) {
-      isDragging.current = true;
-      // Batalin timer speed
-      if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
-    }
-  };
-
-  const handleEnd = (e: any) => {
-    if (e.type === 'mouseup') e.preventDefault();
-    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
-
-    // 🔥 CEK: Kalau tadi jari gerak jauh (Scroll), jangan Pause!
-    if (isDragging.current) {
-      isDragging.current = false;
-      return; 
-    }
-
-    if (isSpeeding) {
-      if (videoRef.current) { videoRef.current.playbackRate = 1.0; setIsSpeeding(false); }
+    if (vid.paused) {
+      vid.play().catch(()=>{});
+      setIsPlaying(true);
     } else {
-      // Toggle Play/Pause
-      if (videoRef.current) {
-        if (videoRef.current.paused) { videoRef.current.play().catch(()=>{}); setIsPlaying(true); }
-        else { videoRef.current.pause(); setIsPlaying(false); }
-      }
+      vid.pause();
+      setIsPlaying(false);
+      setShowControls(true); // Kalo pause, controls harus selalu muncul
+      if (controlsTimer.current) clearTimeout(controlsTimer.current);
     }
   };
 
   const toggleMute = (e: any) => {
-    e.stopPropagation(); // 🔥 PENTING: Biar klik Mute gak dianggap klik Layar (Pause)
-    if (videoRef.current) {
-      const next = !videoRef.current.muted;
-      videoRef.current.muted = next;
-      setIsMuted(next);
+    e.stopPropagation();
+    const vid = videoRef.current;
+    if (vid) {
+      vid.muted = !vid.muted;
+      setIsMuted(vid.muted);
+      resetControlsTimer();
     }
   };
 
   return (
-    <div className="relative w-full h-full bg-black select-none touch-pan-y">
+    <div className="relative w-full h-full bg-black select-none touch-pan-y" onClick={handleTapScreen}>
+      
+      {/* VIDEO */}
       <video
         ref={videoRef}
-        src={src}
-        poster={poster}
+        src={item.video || ""}
+        poster={item.poster || ""}
         className="w-full h-full object-cover"
-        playsInline
-        webkit-playsinline="true"
-        loop={false}
-        muted={isMuted}
+        playsInline webkit-playsinline="true" loop={false} muted={isMuted}
         onTimeUpdate={() => videoRef.current && setProgress((videoRef.current.currentTime / videoRef.current.duration) * 100)}
         onEnded={onEnded}
       />
-      
-      {/* Layer Sentuh (Z-Index 10) */}
+
+      {/* --- LAYER CONTROLS (Fading Transition) --- */}
       <div 
-        className="absolute inset-0 z-10"
-        onMouseDown={handleStart} 
-        onMouseUp={handleEnd} 
-        onMouseLeave={handleEnd}
-        onTouchStart={handleStart} 
-        onTouchMove={handleMove}
-        onTouchEnd={handleEnd}
-      />
-
-      {/* Tombol Mute (Z-Index 50 - Paling Atas) */}
-      <button 
-        onClick={toggleMute}
-        onTouchEnd={(e) => { e.preventDefault(); toggleMute(e); }}
-        className="absolute top-4 right-4 z-50 p-2 bg-black/40 backdrop-blur rounded-full text-white/80 hover:text-white cursor-pointer"
+        className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls ? "opacity-100 visible" : "opacity-0 invisible"}`}
       >
-        {isMuted ? (
-           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
-        ) : (
-           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
-        )}
-      </button>
-
-      {/* Indikator Speed */}
-      {isSpeeding && (
-         <div className="absolute top-10 inset-x-0 flex justify-center z-20 pointer-events-none">
-           <span className="bg-black/50 text-white text-xs px-3 py-1 rounded-full backdrop-blur">⚡ 2x Speed</span>
-         </div>
-      )}
-
-      {/* Icon Play Tengah */}
-      {!isPlaying && !isSpeeding && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-           <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur shadow">
-              <svg className="w-6 h-6 text-white ml-1" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-           </div>
+        {/* 1. Play/Pause Button (CENTER) - Wajib klik ini buat pause */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <button 
+            onClick={togglePlay}
+            className="w-20 h-20 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/60 hover:scale-110 transition pointer-events-auto"
+          >
+            {isPlaying ? (
+              <svg className="w-8 h-8 opacity-80" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> // Icon Pause
+            ) : (
+              <svg className="w-8 h-8 ml-1 opacity-90" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> // Icon Play
+            )}
+          </button>
         </div>
-      )}
 
-      {/* Progress Bar */}
+        {/* 2. Tombol Mute (Top Right) */}
+        <button 
+          onClick={toggleMute}
+          className="absolute top-4 right-4 p-2.5 bg-black/30 backdrop-blur rounded-full text-white/90 hover:text-white pointer-events-auto z-30"
+        >
+          {isMuted ? (
+             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+          ) : (
+             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+          )}
+        </button>
+
+        {/* 3. Overlay Info & Buttons (Bottom) */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 pb-8 bg-gradient-to-t from-black/90 via-black/20 to-transparent flex items-end gap-3 pointer-events-auto">
+            <div className="flex-1 space-y-2 pb-1" onClick={(e) => e.stopPropagation()}>
+               <span className="bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded">
+                 Ep. {item.epNo}
+               </span>
+               <p className="text-xs text-white/90 line-clamp-3 leading-relaxed drop-shadow-md pr-2">
+                 {item.intro || "Drama seru full episode sub indo."}
+               </p>
+            </div>
+
+            <div className="flex flex-col gap-4 items-center">
+              {/* Tombol EPS */}
+              <button onClick={(e) => { e.stopPropagation(); onOpenEpList(); }} className="flex flex-col items-center gap-1 group active:scale-95 transition">
+                <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur border border-white/10 flex items-center justify-center hover:bg-white/20">
+                  <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
+                </div>
+                <span className="text-[9px] font-medium text-white/80">Eps</span>
+              </button>
+
+              {/* Tombol My List */}
+              <button onClick={(e) => { e.stopPropagation(); onToggleMyList(); }} className="flex flex-col items-center gap-1 group active:scale-95 transition">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center border backdrop-blur ${isSaved ? "bg-red-600 border-red-500 text-white" : "bg-white/10 border-white/10 text-white"}`}>
+                  {isSaved ? (
+                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  ) : (
+                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                  )}
+                </div>
+                <span className="text-[9px] font-medium text-white/80">{isSaved ? "Saved" : "List"}</span>
+              </button>
+            </div>
+        </div>
+      </div>
+
+      {/* Progress Bar (Selalu Muncul tapi Tipis) */}
       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20 z-20">
          <div className="h-full bg-red-600 transition-all duration-100" style={{ width: `${progress}%` }} />
       </div>
     </div>
   );
 }
-
