@@ -253,8 +253,7 @@ export default function WatchFeed({ bookId }: { bookId: string }) {
   );
 }
 
-// --- VIDEO PLAYER + OVERLAY (THE "SAFE" SOLUTION) ---
-// Semua logic UI & Kontrol ada di sini biar aman & sinkron
+// --- VIDEO PLAYER + OVERLAY (FINAL + 2X SPEED IS BACK) ---
 function VideoPlayer({ 
   item, isActive, onEnded, onOpenEpList, onToggleMyList, isSaved 
 }: { 
@@ -263,20 +262,24 @@ function VideoPlayer({
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   
-  // State
+  // State Player
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [showControls, setShowControls] = useState(true); // 🔥 VISIBILITY STATE
+  const [showControls, setShowControls] = useState(true);
+  const [isSpeeding, setIsSpeeding] = useState(false); // 🔥 State Speed Balik Lagi
   const [progress, setProgress] = useState(0);
 
+  // Refs Logic Sentuhan
   const controlsTimer = useRef<NodeJS.Timeout | null>(null);
+  const pressTimer = useRef<NodeJS.Timeout | null>(null);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startY = useRef(0);
 
-  // 1. AUTO-HIDE LOGIC
+  // 1. AUTO-HIDE CONTROLS
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
     if (controlsTimer.current) clearTimeout(controlsTimer.current);
-    
-    // Sembunyikan setelah 4 detik (kalo lagi play)
     if (isPlaying) {
       controlsTimer.current = setTimeout(() => {
         setShowControls(false);
@@ -293,16 +296,19 @@ function VideoPlayer({
       const timer = setTimeout(() => {
         vid.currentTime = 0; 
         vid.muted = isMuted;
+        vid.playbackRate = 1.0;
+        setIsSpeeding(false);
         vid.play().then(() => {
           setIsPlaying(true);
-          resetControlsTimer(); // Mulai timer pas play
+          resetControlsTimer();
         }).catch(() => setIsPlaying(false));
       }, 50); 
       return () => clearTimeout(timer);
     } else {
       vid.pause();
       setIsPlaying(false);
-      setShowControls(true); // Reset controls jadi muncul pas geser
+      setIsSpeeding(false);
+      setShowControls(true);
     }
   }, [isActive, item.video]);
 
@@ -311,12 +317,71 @@ function VideoPlayer({
     resetControlsTimer();
   }, [isPlaying, resetControlsTimer]);
 
-  // 3. HANDLERS
-  const handleTapScreen = () => {
-    // 🔥 PENTING: Tap layar CUMA buat munculin controls, BUKAN pause video.
-    // Ini solusi "Aman" biar scroll gak nge-pause.
-    resetControlsTimer();
+  // 3. HANDLER SENTUHAN (LOGIC 2X SPEED + TAP)
+  
+  const handleStart = (e: any) => {
+    // Simpan posisi awal buat deteksi scroll
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    startX.current = clientX;
+    startY.current = clientY;
+    isDragging.current = false;
+
+    if (e.type === 'mousedown') e.preventDefault(); // Biar gak drag gambar di PC
+
+    // Timer Long Press (2x Speed)
+    pressTimer.current = setTimeout(() => {
+      // Cuma aktifin speed kalau GAK lagi scroll
+      if (!isDragging.current && videoRef.current) {
+        videoRef.current.playbackRate = 2.0;
+        setIsSpeeding(true);
+        setShowControls(false); // Umpetin tombol pas lagi ngebut biar bersih
+      }
+    }, 200); // Tahan 200ms = Speed
   };
+
+  const handleMove = (e: any) => {
+    if (isDragging.current) return;
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const diffX = Math.abs(clientX - startX.current);
+    const diffY = Math.abs(clientY - startY.current);
+
+    // Toleransi gerak 10px. Lebih dari itu = SCROLL
+    if (diffX > 10 || diffY > 10) {
+      isDragging.current = true;
+      if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+      
+      // Kalau keburu speed, batalin
+      if (isSpeeding && videoRef.current) {
+        videoRef.current.playbackRate = 1.0;
+        setIsSpeeding(false);
+      }
+    }
+  };
+
+  const handleEnd = (e: any) => {
+    if (e.type === 'mouseup') e.preventDefault();
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+
+    // Kalau tadi lagi Speeding (Tahan Lama)
+    if (isSpeeding) {
+      if (videoRef.current) { 
+        videoRef.current.playbackRate = 1.0; 
+        setIsSpeeding(false); 
+        resetControlsTimer(); // Munculin tombol lagi abis ngebut
+      }
+      return;
+    }
+
+    // Kalau tadi cuma Tap (Bukan Scroll, Bukan Speeding)
+    if (!isDragging.current) {
+      resetControlsTimer(); // Munculin/Reset timer tombol
+    }
+  };
+
+  // --- TOMBOL CONTROL ---
 
   const togglePlay = (e: any) => {
     e.stopPropagation();
@@ -329,7 +394,7 @@ function VideoPlayer({
     } else {
       vid.pause();
       setIsPlaying(false);
-      setShowControls(true); // Kalo pause, controls harus selalu muncul
+      setShowControls(true);
       if (controlsTimer.current) clearTimeout(controlsTimer.current);
     }
   };
@@ -345,7 +410,11 @@ function VideoPlayer({
   };
 
   return (
-    <div className="relative w-full h-full bg-black select-none touch-pan-y" onClick={handleTapScreen}>
+    <div 
+      className="relative w-full h-full bg-black select-none touch-pan-y"
+      onMouseDown={handleStart} onMouseUp={handleEnd} onMouseLeave={handleEnd}
+      onTouchStart={handleStart} onTouchMove={handleMove} onTouchEnd={handleEnd}
+    >
       
       {/* VIDEO */}
       <video
@@ -358,28 +427,42 @@ function VideoPlayer({
         onEnded={onEnded}
       />
 
-      {/* --- LAYER CONTROLS (Fading Transition) --- */}
+      {/* INDIKATOR 2X SPEED (Muncul pas ditahan) */}
+      {isSpeeding && (
+         <div className="absolute top-10 inset-x-0 flex justify-center z-50 pointer-events-none animate-in fade-in zoom-in duration-200">
+           <div className="bg-black/60 backdrop-blur-md px-4 py-1.5 rounded-full text-white text-xs font-bold flex items-center gap-1.5 shadow-xl border border-white/10">
+             <span className="text-yellow-400">⚡</span> 2x Speed
+           </div>
+         </div>
+      )}
+
+      {/* --- LAYER CONTROLS --- */}
       <div 
-        className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls ? "opacity-100 visible" : "opacity-0 invisible"}`}
+        className={`absolute inset-0 z-20 transition-opacity duration-300 ${showControls && !isSpeeding ? "opacity-100 visible" : "opacity-0 invisible"}`}
       >
-        {/* 1. Play/Pause Button (CENTER) - Wajib klik ini buat pause */}
+        {/* Play/Pause Button (CENTER) */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <button 
             onClick={togglePlay}
-            className="w-20 h-20 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/60 hover:scale-110 transition pointer-events-auto"
+            // Tambahin onTouchEnd stopPropagation biar gak double trigger sama container
+            onTouchEnd={(e) => e.stopPropagation()} 
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-20 h-20 bg-black/40 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-black/60 hover:scale-110 transition pointer-events-auto cursor-pointer"
           >
             {isPlaying ? (
-              <svg className="w-8 h-8 opacity-80" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> // Icon Pause
+              <svg className="w-8 h-8 opacity-80" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> 
             ) : (
-              <svg className="w-8 h-8 ml-1 opacity-90" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> // Icon Play
+              <svg className="w-8 h-8 ml-1 opacity-90" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> 
             )}
           </button>
         </div>
 
-        {/* 2. Tombol Mute (Top Right) */}
+        {/* Tombol Mute */}
         <button 
           onClick={toggleMute}
-          className="absolute top-4 right-4 p-2.5 bg-black/30 backdrop-blur rounded-full text-white/90 hover:text-white pointer-events-auto z-30"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()} 
+          className="absolute top-4 right-4 p-2.5 bg-black/30 backdrop-blur rounded-full text-white/90 hover:text-white pointer-events-auto z-30 cursor-pointer"
         >
           {isMuted ? (
              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
@@ -388,9 +471,9 @@ function VideoPlayer({
           )}
         </button>
 
-        {/* 3. Overlay Info & Buttons (Bottom) */}
+        {/* Bottom Overlay */}
         <div className="absolute bottom-0 left-0 right-0 p-4 pb-8 bg-gradient-to-t from-black/90 via-black/20 to-transparent flex items-end gap-3 pointer-events-auto">
-            <div className="flex-1 space-y-2 pb-1" onClick={(e) => e.stopPropagation()}>
+            <div className="flex-1 space-y-2 pb-1" onMouseDown={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>
                <span className="bg-white/20 backdrop-blur-md text-white text-[10px] font-bold px-2 py-0.5 rounded">
                  Ep. {item.epNo}
                </span>
@@ -401,7 +484,12 @@ function VideoPlayer({
 
             <div className="flex flex-col gap-4 items-center">
               {/* Tombol EPS */}
-              <button onClick={(e) => { e.stopPropagation(); onOpenEpList(); }} className="flex flex-col items-center gap-1 group active:scale-95 transition">
+              <button 
+                onClick={(e) => { e.stopPropagation(); onOpenEpList(); }} 
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => { e.stopPropagation(); onOpenEpList(); }}
+                className="flex flex-col items-center gap-1 group active:scale-95 transition cursor-pointer"
+              >
                 <div className="w-10 h-10 rounded-full bg-white/10 backdrop-blur border border-white/10 flex items-center justify-center hover:bg-white/20">
                   <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
                 </div>
@@ -409,7 +497,12 @@ function VideoPlayer({
               </button>
 
               {/* Tombol My List */}
-              <button onClick={(e) => { e.stopPropagation(); onToggleMyList(); }} className="flex flex-col items-center gap-1 group active:scale-95 transition">
+              <button 
+                onClick={(e) => { e.stopPropagation(); onToggleMyList(); }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchEnd={(e) => { e.stopPropagation(); onToggleMyList(); }} 
+                className="flex flex-col items-center gap-1 group active:scale-95 transition cursor-pointer"
+              >
                 <div className={`w-10 h-10 rounded-full flex items-center justify-center border backdrop-blur ${isSaved ? "bg-red-600 border-red-500 text-white" : "bg-white/10 border-white/10 text-white"}`}>
                   {isSaved ? (
                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
@@ -423,7 +516,7 @@ function VideoPlayer({
         </div>
       </div>
 
-      {/* Progress Bar (Selalu Muncul tapi Tipis) */}
+      {/* Progress Bar */}
       <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-white/20 z-20">
          <div className="h-full bg-red-600 transition-all duration-100" style={{ width: `${progress}%` }} />
       </div>
